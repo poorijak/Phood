@@ -5,6 +5,8 @@ import nextTs from "eslint-config-next/typescript";
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  // ข้อมูลผู้ใช้อยู่ใน localStorage จึงต้องอ่านใน effect หลัง mount
+  { rules: { "react-hooks/set-state-in-effect": "off" } },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:
