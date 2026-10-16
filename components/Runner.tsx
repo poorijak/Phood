@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { cuesFor, promptSpeech } from "@/lib/cues";
 import { MODE_LABEL } from "@/lib/content";
-import { speak, speechSupport, stopSpeaking } from "@/lib/speak";
+import { installAudioUnlock, speak, speechSupport, stopSpeaking } from "@/lib/speak";
 import type { Item, ItemResult, ItemStatus } from "@/lib/types";
 import { LOCAL_MODE, speechRecognitionSupported, useRecorder } from "./useRecorder";
 
@@ -52,6 +52,7 @@ export default function Runner({
   }, [idx]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    installAudioUnlock();
     const t = setTimeout(async () => {
       const w: string[] = [];
       const sp = speechSupport();

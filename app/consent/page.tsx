@@ -1,7 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { speak, stopSpeaking } from "@/lib/speak";
+import { installAudioUnlock, speak, stopSpeaking } from "@/lib/speak";
 import { store } from "@/lib/store";
 
 const TEXT = "แอปนี้ใช้ไมค์ฟังเสียงของคุณ เพื่อตรวจคำตอบ เราไม่เก็บไฟล์เสียงไว้ ถ้าตกลง กดปุ่มสีน้ำเงิน";
@@ -9,7 +9,7 @@ const TEXT = "แอปนี้ใช้ไมค์ฟังเสียงข
 export default function Consent() {
   const router = useRouter();
   useEffect(() => { if (!store.getUser()) router.replace("/"); }, [router]);
-  useEffect(() => () => stopSpeaking(), []);
+  useEffect(() => { installAudioUnlock(); return () => stopSpeaking(); }, []);
 
   return (
     <div className="flex flex-1 flex-col justify-between gap-6 pt-6">

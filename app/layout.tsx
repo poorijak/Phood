@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Sans_Thai } from "next/font/google";
 import "./globals.css";
+import AudioUnlock from "@/components/AudioUnlock";
 
 const plex = IBM_Plex_Sans_Thai({ variable: "--font-plex", subsets: ["thai", "latin"], weight: ["400", "500", "600", "700"] });
 
@@ -14,6 +15,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="th" className={`${plex.variable} h-full`}>
       <body className="min-h-full">
+        <AudioUnlock />
         <main className="mx-auto flex min-h-dvh w-full max-w-xl flex-col px-4 py-5">{children}</main>
       </body>
     </html>
