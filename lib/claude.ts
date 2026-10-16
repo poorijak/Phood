@@ -8,7 +8,7 @@ const provider = (): "gemini" | "anthropic" | "none" =>
 export const hasClaude = () => provider() !== "none";
 export const JUDGE_MODEL = process.env.CLAUDE_JUDGE_MODEL ?? "claude-haiku-5-5";
 export const CHAT_MODEL = process.env.CLAUDE_CHAT_MODEL ?? "claude-sonnet-5-5";
-const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-flash-latest";
 
 let client: Anthropic | null = null;
 function claude(): Anthropic {
@@ -17,19 +17,27 @@ function claude(): Anthropic {
 }
 
 async function askGemini(system: string, user: string, maxTokens: number): Promise<string> {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-    {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+  const body = (thinkingOff: boolean) =>
+    JSON.stringify({
+      systemInstruction: { parts: [{ text: system }] },
+      contents: [{ role: "user", parts: [{ text: user }] }],
+      generationConfig: {
+        maxOutputTokens: Math.max(512, maxTokens * 4),
+        temperature: 0.2,
+        // ปิดการ "คิด" เพื่อให้ตอบเร็ว (ผู้ป่วยรอนานจะท้อ) — บางรุ่นไม่รองรับ จึงมี retry ด้านล่าง
+        ...(thinkingOff ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+      },
+    });
+  const call = (thinkingOff: boolean) =>
+    fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY! },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        contents: [{ role: "user", parts: [{ text: user }] }],
-        // รุ่นที่มี "thinking" นับ token คิดรวมใน maxOutputTokens จึงเผื่อไว้
-        generationConfig: { maxOutputTokens: Math.max(512, maxTokens * 4), temperature: 0.2 },
-      }),
-    },
-  );
+      body: body(thinkingOff),
+      signal: AbortSignal.timeout(10_000), // ไม่รอเกิน 10 วินาที แล้วให้ route ใช้กฎในเครื่องแทน
+    });
+  let res = await call(true);
+  if (res.status === 400) res = await call(false);
   if (!res.ok) throw new Error(`gemini ${res.status}`);
   const data = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
   return (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");

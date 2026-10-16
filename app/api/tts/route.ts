@@ -1,5 +1,5 @@
 // ข้อความ → เสียงพูด: Gemini TTS (ถ้ามี GEMINI_API_KEY) → ElevenLabs (ถ้ามี key) → 503 ให้ client ใช้เสียงเบราว์เซอร์
-const GEMINI_TTS_MODEL = process.env.GEMINI_TTS_MODEL ?? "gemini-2.5-flash-preview-tts";
+const GEMINI_TTS_MODEL = process.env.GEMINI_TTS_MODEL ?? "gemini-3.8-flash-tts";
 const GEMINI_TTS_VOICE = process.env.GEMINI_TTS_VOICE ?? "Kore";
 
 function pcmToWav(pcm: Buffer, sampleRate: number): Buffer {
@@ -14,6 +14,7 @@ function pcmToWav(pcm: Buffer, sampleRate: number): Buffer {
 async function geminiTts(text: string): Promise<Response> {
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent`, {
     method: "POST",
+    signal: AbortSignal.timeout(15_000),
     headers: { "content-type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY! },
     body: JSON.stringify({
       contents: [{ parts: [{ text }] }],
@@ -23,14 +24,20 @@ async function geminiTts(text: string): Promise<Response> {
       },
     }),
   });
-  if (!res.ok) return Response.json({ error: "tts_failed", status: res.status }, { status: 502 });
+  if (!res.ok) {
+    console.warn("[tts] gemini", res.status, (await res.text()).slice(0, 200));
+    return Response.json({ error: "tts_failed", status: res.status }, { status: 502 });
+  }
   const data = (await res.json()) as {
     candidates?: { content?: { parts?: { inlineData?: { data?: string; mimeType?: string } }[] } }[];
   };
   const inline = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data)?.inlineData;
   if (!inline?.data) return Response.json({ error: "no_audio" }, { status: 502 });
+  const raw = Buffer.from(inline.data, "base64");
+  // โมเดลใหม่ส่ง WAV สมบูรณ์มาแล้ว; รุ่นเก่าส่ง PCM ดิบ (audio/l16) ต้องใส่ header เอง
+  const isWav = inline.mimeType?.includes("wav");
   const rate = Number(inline.mimeType?.match(/rate=(\d+)/)?.[1] ?? 24000);
-  const wav = pcmToWav(Buffer.from(inline.data, "base64"), rate);
+  const wav = isWav ? raw : pcmToWav(raw, rate);
   return new Response(new Uint8Array(wav), { headers: { "content-type": "audio/wav", "cache-control": "private, max-age=86400" } });
 }
 
