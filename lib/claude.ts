@@ -9,6 +9,7 @@ export const hasClaude = () => provider() !== "none";
 export const JUDGE_MODEL = process.env.CLAUDE_JUDGE_MODEL ?? "claude-haiku-5-5";
 export const CHAT_MODEL = process.env.CLAUDE_CHAT_MODEL ?? "claude-sonnet-5-5";
 const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-3.1-flash-lite";
+const GEMINI_FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL ?? "gemini-3.5-flash-lite";
 
 let client: Anthropic | null = null;
 function claude(): Anthropic {
@@ -16,38 +17,55 @@ function claude(): Anthropic {
   return client;
 }
 
-async function askGemini(system: string, user: string, maxTokens: number): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
-  const body = (thinkingOff: boolean) =>
-    JSON.stringify({
-      systemInstruction: { parts: [{ text: system }] },
-      contents: [{ role: "user", parts: [{ text: user }] }],
-      generationConfig: {
-        maxOutputTokens: Math.max(512, maxTokens * 4),
-        temperature: 0.2,
-        // ปิดการ "คิด" เพื่อให้ตอบเร็ว (ผู้ป่วยรอนานจะท้อ) — บางรุ่นไม่รองรับ จึงมี retry ด้านล่าง
-        ...(thinkingOff ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
-      },
-    });
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+async function geminiOnce(model: string, system: string, user: string, maxTokens: number, temperature: number): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   const call = (thinkingOff: boolean) =>
     fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY! },
-      body: body(thinkingOff),
-      signal: AbortSignal.timeout(10_000), // ไม่รอเกิน 10 วินาที แล้วให้ route ใช้กฎในเครื่องแทน
+      signal: AbortSignal.timeout(6_000),
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: system }] },
+        contents: [{ role: "user", parts: [{ text: user }] }],
+        generationConfig: {
+          // รุ่นที่ "คิด" นับ token คิดรวมใน maxOutputTokens จึงเผื่อไว้
+          maxOutputTokens: Math.max(512, maxTokens * 4),
+          temperature,
+          // ปิดการคิดเพื่อให้ตอบเร็ว (ผู้ป่วยรอนานจะท้อ) — บางรุ่นไม่รองรับจึงลองใหม่แบบไม่ใส่
+          ...(thinkingOff ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+        },
+      }),
     });
   let res = await call(true);
   if (res.status === 400) res = await call(false);
-  if (!res.ok) throw new Error(`gemini ${res.status}`);
+  if (!res.ok) throw new Error(`gemini ${model} ${res.status}`);
   const data = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
-  return (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
+  const text = (data.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
+  if (!text.trim()) throw new Error(`gemini ${model} empty`);
+  return text;
 }
 
-export async function ask(model: string, system: string, user: string, maxTokens = 300): Promise<string> {
-  if (provider() === "gemini") return askGemini(system, user, maxTokens);
+// ส่งไปโมเดลหลักก่อน ถ้าช้าเกิน 2.5 วินาที (หรือพัง) ส่งซ้ำไปโมเดลสำรองทันที แล้วใช้ตัวที่ตอบก่อน
+async function askGemini(system: string, user: string, maxTokens: number, temperature: number): Promise<string> {
+  const primary = geminiOnce(GEMINI_MODEL, system, user, maxTokens, temperature);
+  const early = await Promise.race([
+    primary.then((v) => ({ v }), () => ({ v: null as string | null })),
+    sleep(2_500).then(() => ({ v: null as string | null })),
+  ]);
+  if (early.v !== null) return early.v;
+  const backup = geminiOnce(GEMINI_FALLBACK_MODEL, system, user, maxTokens, temperature);
+  return Promise.any([primary, backup]);
+}
+
+/** temperature ต่ำ = ตัดสินคำตอบนิ่ง · สูง = คำพูดหลากหลาย (ใช้กับโหมดคุย) */
+export async function ask(model: string, system: string, user: string, maxTokens = 300, temperature = 0.2): Promise<string> {
+  if (provider() === "gemini") return askGemini(system, user, maxTokens, temperature);
   const res = await claude().messages.create({
     model,
     max_tokens: maxTokens,
+    temperature: Math.min(1, temperature),
     system,
     messages: [{ role: "user", content: user }],
   });
