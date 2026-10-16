@@ -48,19 +48,34 @@ async function geminiTts(text: string): Promise<Response> {
 }
 
 async function elevenTts(text: string): Promise<Response> {
-  const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}?output_format=mp3_44100_64`, {
-    method: "POST",
-    headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY!, "content-type": "application/json" },
-    body: JSON.stringify({ text, model_id: process.env.ELEVENLABS_TTS_MODEL ?? "eleven_v3", language_code: "th" }),
-  });
-  if (!res.ok) return Response.json({ error: "tts_failed", status: res.status }, { status: 502 });
+  const call = (model: string) =>
+    fetch(`https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}?output_format=mp3_44100_64`, {
+      method: "POST",
+      signal: AbortSignal.timeout(15_000),
+      headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY!, "content-type": "application/json" },
+      body: JSON.stringify({
+        text,
+        model_id: model,
+        // multilingual_v2 ตรวจภาษาเอง และไม่รับ language_code
+        ...(model === "eleven_multilingual_v2" ? {} : { language_code: "th" }),
+      }),
+    });
+  let res = await call(process.env.ELEVENLABS_TTS_MODEL ?? "eleven_v3");
+  if (res.status === 400 || res.status === 422) res = await call("eleven_multilingual_v2");
+  if (!res.ok) {
+    console.warn("[tts] elevenlabs", res.status, (await res.text()).slice(0, 200));
+    return Response.json({ error: "tts_failed", status: res.status }, { status: res.status === 429 ? 429 : 502 });
+  }
   return new Response(res.body, { headers: { "content-type": "audio/mpeg", "cache-control": "private, max-age=86400" } });
 }
 
 export async function POST(req: Request) {
   const { text } = (await req.json()) as { text?: string };
   if (!text || text.length > 400) return Response.json({ error: "bad_text" }, { status: 400 });
-  if (process.env.GEMINI_API_KEY) return geminiTts(text);
-  if (process.env.ELEVENLABS_API_KEY && process.env.ELEVENLABS_VOICE_ID) return elevenTts(text);
-  return Response.json({ error: "no_key" }, { status: 503 });
+  const hasEleven = !!(process.env.ELEVENLABS_API_KEY && process.env.ELEVENLABS_VOICE_ID);
+  // TTS_PROVIDER=elevenlabs | gemini | browser (ค่าเริ่มต้น: elevenlabs ถ้ามี key ไม่งั้น browser)
+  const provider = process.env.TTS_PROVIDER ?? (hasEleven ? "elevenlabs" : "browser");
+  if (provider === "elevenlabs" && hasEleven) return elevenTts(text);
+  if (provider === "gemini" && process.env.GEMINI_API_KEY) return geminiTts(text);
+  return Response.json({ error: "no_key" }, { status: 503 }); // client ใช้เสียงเบราว์เซอร์แทน
 }

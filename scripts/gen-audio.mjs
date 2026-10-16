@@ -1,4 +1,4 @@
-// สร้างไฟล์เสียงล่วงหน้าด้วย Gemini TTS → public/audio/<sha1-16>.wav (แอปเล่นไฟล์ก่อนเสมอ ไม่เสียโควตา)
+// สร้างไฟล์เสียงล่วงหน้าด้วย ElevenLabs (ค่าเริ่มต้น) หรือ Gemini TTS (TTS_PROVIDER=gemini) → public/audio/<sha1-16>.wav (แอปเล่นไฟล์ก่อนเสมอ ไม่เสียโควตา)
 // รัน: node scripts/gen-audio.mjs            (ข้ามไฟล์ที่มีแล้ว หยุดเองเมื่อโควตาวันนี้หมด รันซ้ำพรุ่งนี้ต่อได้)
 //      node scripts/gen-audio.mjs --max 30   (จำกัดจำนวนต่อรอบ)
 import fs from "node:fs";
@@ -14,8 +14,13 @@ const env = Object.fromEntries(
   fs.readFileSync(path.join(root, ".env.local"), "utf8").split("\n")
     .filter((l) => /^[A-Z_]+=/.test(l)).map((l) => { const i = l.indexOf("="); return [l.slice(0, i), l.slice(i + 1).trim().split(/\s+/)[0]]; }),
 );
-const KEY = env.GEMINI_API_KEY;
-if (!KEY) { console.error("ไม่พบ GEMINI_API_KEY ใน .env.local"); process.exit(1); }
+const PROVIDER = env.TTS_PROVIDER || (env.ELEVENLABS_API_KEY ? "elevenlabs" : "gemini");
+const KEY = PROVIDER === "gemini" ? env.GEMINI_API_KEY : env.ELEVENLABS_API_KEY;
+if (!KEY || (PROVIDER === "elevenlabs" && !env.ELEVENLABS_VOICE_ID)) {
+  console.error(PROVIDER === "gemini" ? "ไม่พบ GEMINI_API_KEY ใน .env.local" : "ต้องมี ELEVENLABS_API_KEY และ ELEVENLABS_VOICE_ID ใน .env.local");
+  process.exit(1);
+}
+console.log("ผู้ให้บริการเสียง:", PROVIDER);
 const MODEL = env.GEMINI_TTS_MODEL || "gemini-2.5-flash-preview-tts";
 const VOICE = env.GEMINI_TTS_VOICE || "Kore";
 const max = Number(process.argv[process.argv.indexOf("--max") + 1]) || Infinity;
@@ -58,6 +63,17 @@ console.log(`ข้อความทั้งหมด ${texts.length} · ม�
 
 let made = 0;
 async function synth(t) {
+  if (PROVIDER === "elevenlabs") {
+    const go = (model) =>
+      fetch(`https://api.elevenlabs.io/v1/text-to-speech/${env.ELEVENLABS_VOICE_ID}?output_format=pcm_24000`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "xi-api-key": KEY },
+        body: JSON.stringify({ text: t, model_id: model, ...(model === "eleven_multilingual_v2" ? {} : { language_code: "th" }) }),
+      });
+    let r = await go(env.ELEVENLABS_TTS_MODEL || "eleven_v3");
+    if (r.status === 400 || r.status === 422) r = await go("eleven_multilingual_v2");
+    return r;
+  }
   return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-goog-api-key": KEY },
@@ -81,12 +97,18 @@ for (const t of todo) {
   }
   if (stop) break;
   if (!res.ok) { console.log(`ข้าม "${t.slice(0, 20)}…" (${res.status})`); continue; }
-  const data = await res.json();
-  const inline = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data)?.inlineData;
-  if (!inline) { console.log(`ไม่มีเสียงสำหรับ "${t.slice(0, 20)}…"`); continue; }
-  const raw = Buffer.from(inline.data, "base64");
-  const rate = Number(inline.mimeType?.match(/rate=(\d+)/)?.[1] ?? 24000);
-  fs.writeFileSync(path.join(outDir, `${hash(t)}.wav`), inline.mimeType?.includes("wav") ? raw : wav(raw, rate));
+  let pcm, rate = 24000, isWav = false;
+  if (PROVIDER === "elevenlabs") {
+    pcm = Buffer.from(await res.arrayBuffer());
+  } else {
+    const data = await res.json();
+    const inline = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data)?.inlineData;
+    if (!inline) { console.log(`ไม่มีเสียงสำหรับ "${t.slice(0, 20)}…"`); continue; }
+    pcm = Buffer.from(inline.data, "base64");
+    rate = Number(inline.mimeType?.match(/rate=(\d+)/)?.[1] ?? 24000);
+    isWav = !!inline.mimeType?.includes("wav");
+  }
+  fs.writeFileSync(path.join(outDir, `${hash(t)}.wav`), isWav ? pcm : wav(pcm, rate));
   made++;
   console.log(`✓ ${made}  ${t.slice(0, 40)}`);
   await new Promise((r) => setTimeout(r, 7000));
