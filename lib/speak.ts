@@ -71,12 +71,18 @@ async function decode(data: ArrayBuffer): Promise<AudioBuffer | null> {
   try { return await c.decodeAudioData(data); } catch { return null; }
 }
 
-async function loadFile(id: string): Promise<AudioBuffer | null> {
-  const key = `file:${id}`;
+/** ชื่อไฟล์เสียงล่วงหน้า = sha1(ข้อความ) 16 ตัวแรก (สร้างด้วย scripts/gen-audio.mjs) */
+async function fileName(text: string): Promise<string> {
+  const d = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(text));
+  return [...new Uint8Array(d)].slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function loadFile(text: string): Promise<AudioBuffer | null> {
+  const key = `file:${text}`;
   const hit = bufferCache.get(key);
   if (hit) return hit;
   try {
-    const r = await fetch(`/audio/${id}.mp3`);
+    const r = await fetch(`/audio/${await fileName(text)}.wav`);
     if (!r.ok) return null;
     const b = await decode(await r.arrayBuffer());
     if (b) bufferCache.set(key, b);
@@ -92,7 +98,7 @@ async function loadTts(text: string): Promise<AudioBuffer | null> {
   try {
     const r = await fetch("/api/tts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) });
     if (!r.ok) {
-      ttsBlockedUntil = r.status === 503 ? Infinity : Date.now() + 60_000;
+      ttsBlockedUntil = r.status === 503 ? Infinity : Date.now() + (r.status === 429 ? 10 * 60_000 : 60_000);
       console.warn("[speak] /api/tts", r.status);
       return null;
     }
@@ -107,10 +113,10 @@ async function loadTts(text: string): Promise<AudioBuffer | null> {
   }
 }
 
-export async function speak(text: string, opts: { id?: string } = {}): Promise<void> {
+export async function speak(text: string, _opts: { id?: string } = {}): Promise<void> {
   if (!text.trim()) return;
   stopSpeaking();
-  const fromFile = opts.id ? await loadFile(opts.id) : null;
+  const fromFile = await loadFile(text);
   if (fromFile && (await playBuffer(fromFile))) { lastSource = "file"; return; }
   const fromApi = await loadTts(text);
   if (fromApi && (await playBuffer(fromApi))) { lastSource = "api"; return; }

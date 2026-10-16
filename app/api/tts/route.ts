@@ -1,5 +1,8 @@
 // ข้อความ → เสียงพูด: Gemini TTS (ถ้ามี GEMINI_API_KEY) → ElevenLabs (ถ้ามี key) → 503 ให้ client ใช้เสียงเบราว์เซอร์
-const GEMINI_TTS_MODEL = process.env.GEMINI_TTS_MODEL ?? "gemini-3.8-flash-tts";
+const GEMINI_TTS_MODEL = process.env.GEMINI_TTS_MODEL ?? "gemini-2.5-flash-preview-tts";
+// โมเดล TTS ตอบเป็นข้อความถ้าไม่มีคำสั่งนำหน้า (ได้ 400) จึงต้องสั่งให้อ่านออกเสียงเท่านั้น
+const INSTRUCTION = "Read aloud in Thai, slowly and clearly, exactly this text: ";
+const memCache = new Map<string, Buffer>();
 const GEMINI_TTS_VOICE = process.env.GEMINI_TTS_VOICE ?? "Kore";
 
 function pcmToWav(pcm: Buffer, sampleRate: number): Buffer {
@@ -12,12 +15,14 @@ function pcmToWav(pcm: Buffer, sampleRate: number): Buffer {
 }
 
 async function geminiTts(text: string): Promise<Response> {
+  const hit = memCache.get(text);
+  if (hit) return new Response(new Uint8Array(hit), { headers: { "content-type": "audio/wav", "cache-control": "private, max-age=86400" } });
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TTS_MODEL}:generateContent`, {
     method: "POST",
     signal: AbortSignal.timeout(15_000),
     headers: { "content-type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY! },
     body: JSON.stringify({
-      contents: [{ parts: [{ text }] }],
+      contents: [{ parts: [{ text: INSTRUCTION + text }] }],
       generationConfig: {
         responseModalities: ["AUDIO"],
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: GEMINI_TTS_VOICE } } },
@@ -26,7 +31,7 @@ async function geminiTts(text: string): Promise<Response> {
   });
   if (!res.ok) {
     console.warn("[tts] gemini", res.status, (await res.text()).slice(0, 200));
-    return Response.json({ error: "tts_failed", status: res.status }, { status: 502 });
+    return Response.json({ error: "tts_failed", status: res.status }, { status: res.status === 429 ? 429 : 502 });
   }
   const data = (await res.json()) as {
     candidates?: { content?: { parts?: { inlineData?: { data?: string; mimeType?: string } }[] } }[];
@@ -38,6 +43,7 @@ async function geminiTts(text: string): Promise<Response> {
   const isWav = inline.mimeType?.includes("wav");
   const rate = Number(inline.mimeType?.match(/rate=(\d+)/)?.[1] ?? 24000);
   const wav = isWav ? raw : pcmToWav(raw, rate);
+  memCache.set(text, wav);
   return new Response(new Uint8Array(wav), { headers: { "content-type": "audio/wav", "cache-control": "private, max-age=86400" } });
 }
 
