@@ -8,7 +8,7 @@ const provider = (): "gemini" | "anthropic" | "none" =>
 export const hasClaude = () => provider() !== "none";
 export const JUDGE_MODEL = process.env.CLAUDE_JUDGE_MODEL ?? "claude-haiku-5-5";
 export const CHAT_MODEL = process.env.CLAUDE_CHAT_MODEL ?? "claude-sonnet-5-5";
-const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-flash-latest";
+const GEMINI_MODEL = process.env.GEMINI_MODEL ?? "gemini-3.1-flash-lite";
 
 let client: Anthropic | null = null;
 function claude(): Anthropic {

@@ -3,6 +3,8 @@ const GEMINI_TTS_MODEL = process.env.GEMINI_TTS_MODEL ?? "gemini-2.5-flash-previ
 // โมเดล TTS ตอบเป็นข้อความถ้าไม่มีคำสั่งนำหน้า (ได้ 400) จึงต้องสั่งให้อ่านออกเสียงเท่านั้น
 const INSTRUCTION = "Read aloud in Thai, slowly and clearly, exactly this text: ";
 const memCache = new Map<string, Buffer>();
+// ไม่ต้องกรอก Voice ID: ใช้เสียงสำเร็จรูปของ ElevenLabs เป็นค่าเริ่มต้น (เปลี่ยนได้ด้วย ELEVENLABS_VOICE_ID)
+const ELEVEN_VOICE = process.env.ELEVENLABS_VOICE_ID || "JBFqnCBsd6RMkjVDRZzb";
 const GEMINI_TTS_VOICE = process.env.GEMINI_TTS_VOICE ?? "Kore";
 
 function pcmToWav(pcm: Buffer, sampleRate: number): Buffer {
@@ -49,7 +51,7 @@ async function geminiTts(text: string): Promise<Response> {
 
 async function elevenTts(text: string): Promise<Response> {
   const call = (model: string) =>
-    fetch(`https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}?output_format=mp3_44100_64`, {
+    fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVEN_VOICE}?output_format=mp3_44100_64`, {
       method: "POST",
       signal: AbortSignal.timeout(15_000),
       headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY!, "content-type": "application/json" },
@@ -72,7 +74,7 @@ async function elevenTts(text: string): Promise<Response> {
 export async function POST(req: Request) {
   const { text } = (await req.json()) as { text?: string };
   if (!text || text.length > 400) return Response.json({ error: "bad_text" }, { status: 400 });
-  const hasEleven = !!(process.env.ELEVENLABS_API_KEY && process.env.ELEVENLABS_VOICE_ID);
+  const hasEleven = !!process.env.ELEVENLABS_API_KEY;
   // TTS_PROVIDER=elevenlabs | gemini | browser (ค่าเริ่มต้น: elevenlabs ถ้ามี key ไม่งั้น browser)
   const provider = process.env.TTS_PROVIDER ?? (hasEleven ? "elevenlabs" : "browser");
   if (provider === "elevenlabs" && hasEleven) return elevenTts(text);

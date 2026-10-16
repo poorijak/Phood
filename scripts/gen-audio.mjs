@@ -16,8 +16,8 @@ const env = Object.fromEntries(
 );
 const PROVIDER = env.TTS_PROVIDER || (env.ELEVENLABS_API_KEY ? "elevenlabs" : "gemini");
 const KEY = PROVIDER === "gemini" ? env.GEMINI_API_KEY : env.ELEVENLABS_API_KEY;
-if (!KEY || (PROVIDER === "elevenlabs" && !env.ELEVENLABS_VOICE_ID)) {
-  console.error(PROVIDER === "gemini" ? "ไม่พบ GEMINI_API_KEY ใน .env.local" : "ต้องมี ELEVENLABS_API_KEY และ ELEVENLABS_VOICE_ID ใน .env.local");
+if (!KEY) {
+  console.error(PROVIDER === "gemini" ? "ไม่พบ GEMINI_API_KEY ใน .env.local" : "ไม่พบ ELEVENLABS_API_KEY ใน .env.local");
   process.exit(1);
 }
 console.log("ผู้ให้บริการเสียง:", PROVIDER);
@@ -65,7 +65,7 @@ let made = 0;
 async function synth(t) {
   if (PROVIDER === "elevenlabs") {
     const go = (model) =>
-      fetch(`https://api.elevenlabs.io/v1/text-to-speech/${env.ELEVENLABS_VOICE_ID}?output_format=pcm_24000`, {
+      fetch(`https://api.elevenlabs.io/v1/text-to-speech/${env.ELEVENLABS_VOICE_ID || "JBFqnCBsd6RMkjVDRZzb"}?output_format=pcm_24000`, {
         method: "POST",
         headers: { "content-type": "application/json", "xi-api-key": KEY },
         body: JSON.stringify({ text: t, model_id: model, ...(model === "eleven_multilingual_v2" ? {} : { language_code: "th" }) }),
