@@ -1,6 +1,7 @@
 // เล่นเสียง: ลองไฟล์ในเครื่องก่อน (public/audio) → /api/tts (ElevenLabs) → เสียงไทยของเบราว์เซอร์
 let current: HTMLAudioElement | null = null;
 const ttsCache = new Map<string, string>();
+let ttsBlockedUntil = 0; // 503 = ไม่มี key → ปิดถาวร · error อื่น → พัก 60 วินาที (กันโควตาฟรีหมดแล้วค้าง)
 
 function browserSpeak(text: string): Promise<void> {
   return new Promise((resolve) => {
@@ -31,11 +32,14 @@ export async function speak(text: string, opts: { id?: string } = {}): Promise<v
   if (!text.trim()) return;
   stopSpeaking();
   if (opts.id && (await playUrl(`/audio/${opts.id}.mp3`))) return;
-  if (process.env.NEXT_PUBLIC_LOCAL_MODE === "false") try {
+  if (Date.now() >= ttsBlockedUntil) try {
     let url = ttsCache.get(text);
     if (!url) {
       const res = await fetch("/api/tts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) });
-      if (!res.ok) throw new Error("tts " + res.status);
+      if (!res.ok) {
+        ttsBlockedUntil = res.status === 503 ? Infinity : Date.now() + 60_000;
+        throw new Error("tts " + res.status);
+      }
       url = URL.createObjectURL(await res.blob());
       ttsCache.set(text, url);
     }
